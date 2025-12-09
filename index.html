@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Animal Hunt - Demo (Casino Premium)</title>
+<style>
+  :root{
+    --bg:#050505; --card:#0b0b0b; --gold:#d4af37; --electric:#0ea5ff; --muted:#9aa6b2;
+  }
+  body{margin:0;font-family:Inter,Arial;background:linear-gradient(180deg,#020203 0%, #071018 100%);color:#fff}
+  .wrap{max-width:1100px;margin:18px auto;padding:18px;}
+  header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  h1{margin:0;font-size:20px}
+  .btn{background:linear-gradient(90deg,var(--electric),#6ee7b7);border:none;padding:8px 12px;border-radius:10px;cursor:pointer;color:#001;}
+  .panel{display:grid;grid-template-columns:1fr 350px;gap:18px}
+  .board{background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:16px;border-radius:12px; box-shadow: 0 8px 40px rgba(14,165,255,0.06);}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .cell{background:linear-gradient(180deg,#0e0e0e,#111);padding:14px;border-radius:12px;text-align:center;cursor:pointer;transition:transform .12s, box-shadow .12s;}
+  .cell:hover{transform:translateY(-6px)}
+  .icon{font-size:36px;margin-bottom:6px}
+  .mult{color:var(--muted);font-weight:700;padding:6px;border-radius:8px;background:rgba(255,255,255,0.02)}
+  .cell.glow{box-shadow:0 0 20px 6px rgba(212,175,55,0.12); transform:scale(1.06); border:1px solid rgba(212,175,55,0.08)}
+  .cell.win{animation:pop .8s ease forwards}
+  @keyframes pop{0%{transform:scale(1)}50%{transform:scale(1.12)}100%{transform:scale(1)}}
+  .controls{margin-top:12px;display:flex;gap:8px;align-items:center}
+  .chips{display:flex;gap:8px}
+  .chip{background:#0b1220;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,0.03);cursor:pointer;color:var(--muted)}
+  .right{background:linear-gradient(180deg, rgba(12,13,15,0.5), rgba(8,9,11,0.3)); padding:14px;border-radius:12px}
+  .timer{font-size:18px;color:var(--muted)}
+  footer{color:var(--muted);margin-top:12px;font-size:13px}
+  @media(max-width:900px){ .panel{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Animal Hunt — Demo (Casino Premium)</h1>
+    <div>
+      <span id="userDisplay" style="margin-right:8px;color:var(--muted)"></span>
+      <button id="btnLogin" class="btn">Iniciar sesión / Registrar</button>
+    </div>
+  </header>
+
+  <div class="panel">
+    <div class="board">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div><strong>Ronda:</strong> <span id="roundId">-</span></div>
+        <div class="timer">Tiempo: <span id="timer">--</span></div>
+      </div>
+
+      <div class="grid" id="grid"></div>
+
+      <div class="controls">
+        <div class="chips" id="chips"></div>
+        <button id="btnBet" class="btn">Apostar</button>
+        <button id="btnStart" class="btn" style="background:linear-gradient(90deg,var(--gold),#ffd700)">Iniciar Ronda (Admin)</button>
+        <button id="btnHistory" class="btn">Últimos</button>
+      </div>
+    </div>
+
+    <div class="right">
+      <div><strong>Saldo:</strong> <span id="bal">0</span> ◇</div>
+      <div style="margin-top:8px"><strong>Mis apuestas</strong><div id="myBets" style="margin-top:6px;color:var(--muted)">Sin apuestas</div></div>
+      <div style="margin-top:12px"><strong>Historial servidor</strong><div id="history" style="margin-top:8px;color:var(--muted);max-height:220px;overflow:auto"></div></div>
+      <div style="margin-top:12px;color:var(--muted)">Casa edge: <strong>25%</strong></div>
+    </div>
+  </div>
+
+  <footer>Demo con Google Sheets y Apps Script (instrucciones incluidas arriba)</footer>
+</div>
+
+<!-- modal simple -->
+<div id="modal" style="display:none;position:fixed;inset:0;background:rgba(2,6,23,0.6);align-items:center;justify-content:center;">
+  <div id="modalBox" style="background:#071017;padding:16px;border-radius:10px;color:#e6eef8;min-width:320px"></div>
+</div>
+
+<script>
+const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxjrhwOhSrg2eIyog20_GlwuPxC5xKFNfh55-kKS1bksMI_nxrTDFLLWF7T929NWjDzmg/exec"; // <- reemplaza por tu url de Apps Script
+const ANIMALS = [
+  {id:'pollito', name:'Pollito', icon:'🐣', mult:5},
+  {id:'mariposa', name:'Mariposa', icon:'🦋', mult:5},
+  {id:'gusano', name:'Gusano', icon:'🐛', mult:5},
+  {id:'abeja', name:'Abeja', icon:'🐝', mult:5},
+  {id:'ballena', name:'Ballena', icon:'🐋', mult:10},
+  {id:'elefante', name:'Elefante', icon:'🐘', mult:15},
+  {id:'gorila', name:'Gorila', icon:'🦍', mult:25},
+  {id:'dragon', name:'Dragón', icon:'🐉', mult:45}
+];
+
+let user = null;
+let balance = 0;
+let selectedChip = 50;
+let myBets = {}; // animalId -> amount
+let currentRound = null;
+let highlightInterval = null;
+
+// Build UI
+const gridEl = document.getElementById('grid');
+ANIMALS.forEach(a=>{
+  const div = document.createElement('div');
+  div.className = 'cell';
+  div.dataset.id = a.id;
+  div.innerHTML = `<div class="icon">${a.icon}</div><div style="font-weight:700">${a.name}</div><div class="mult">1:${a.mult}</div>`;
+  div.addEventListener('click', ()=> {
+    if(!currentRound || currentRound.state !== 'betting'){ alert('No está en fase de apuestas'); return; }
+    myBets[a.id] = (myBets[a.id] || 0) + selectedChip;
+    renderMyBets();
+  });
+  gridEl.appendChild(div);
+});
+
+// chips
+const chipsEl = document.getElementById('chips');
+[10,50,200,500].forEach(c=>{
+  const el = document.createElement('div'); el.className='chip'; el.textContent = c + ' ◇';
+  el.addEventListener('click', ()=>{ selectedChip = c; updateChips(); });
+  chipsEl.appendChild(el);
+});
+function updateChips(){ Array.from(chipsEl.children).forEach(ch=>ch.style.borderColor='rgba(255,255,255,0.03)'); Array.from(chipsEl.children).find(ch=>ch.textContent.startsWith(String(selectedChip))).style.borderColor='white';}
+updateChips();
+
+function renderMyBets(){
+  const el = document.getElementById('myBets');
+  if(Object.keys(myBets).length===0){ el.textContent='Sin apuestas'; return; }
+  el.innerHTML = '';
+  for(const k of Object.keys(myBets)){
+    const a = ANIMALS.find(x=>x.id===k);
+    const d = document.createElement('div'); d.textContent = `${a.name} — ${myBets[k]} ◇ (1:${a.mult})`; el.appendChild(d);
+  }
+}
+
+document.getElementById('btnLogin').addEventListener('click', async ()=>{
+  const username = prompt('Usuario (username):'); 
+  if(!username) return;
+
+  const pass = prompt('Contraseña:'); 
+  if(!pass) return;
+
+  // LOGIN
+  const loginResp = await apiPost('login', { username, password: pass });
+
+  if(loginResp && loginResp.ok){
+    user = loginResp.user;
+    balance = user.balance;
+    updateUserUI();
+    alert('Bienvenido ' + user.username);
+    return;
+  }
+
+  // SI LOGIN NO EXISTE → REGISTER
+  if(loginResp && loginResp.error === 'no user'){
+    const reg = confirm('Usuario no existe. ¿Deseas registrarlo?');
+    if(!reg) return;
+
+    const regResp = await apiPost('register', { username, password: pass });
+
+    if(regResp && regResp.ok){
+      user = { 
+        id: regResp.id, 
+        username: regResp.username, 
+        balance: regResp.balance 
+      };
+      balance = user.balance;
+      updateUserUI();
+      alert('Cuenta creada exitosamente');
+    } else {
+      alert('Error: ' + JSON.stringify(regResp));
+    }
+  } 
+  else {
+    alert('Error: ' + JSON.stringify(loginResp));
+  }
+});
+
+
+function updateUserUI(){
+  document.getElementById('userDisplay').textContent = user ? user.username : '';
+  document.getElementById('bal').textContent = balance;
+}
+
+// Start round (admin)
+document.getElementById('btnStart').addEventListener('click', async ()=>{
+  const d = Number(prompt('Duración de apuestas en segundos (ej: 15):', '15')) || 15;
+  const resp = await apiPost('startRound', { durationSec: d });
+  if(resp && resp.ok){ alert('Ronda creada: '+resp.roundId); pollState(); }
+});
+
+// place bets (send bets to sheet)
+document.getElementById('btnBet').addEventListener('click', async ()=>{
+  if(!user){ alert('Inicia sesión'); return; }
+  if(!currentRound){ alert('No hay ronda'); return; }
+  const bets = Object.keys(myBets);
+  if(bets.length===0){ alert('No has apostado'); return; }
+  for(const aid of bets){
+    const amt = myBets[aid];
+    await apiPost('placeBet', {username: user.username, roundId: currentRound.roundId, animalId: aid, amount: amt});
+  }
+  alert('Apuestas registradas en la ronda');
+  myBets = {}; renderMyBets();
+});
+
+// history button
+document.getElementById('btnHistory').addEventListener('click', async ()=>{ const h = await apiGet('getHistory'); showModal(JSON.stringify(h.history.slice(0,12), null, 2)); });
+
+// polling state every 2s
+setInterval(pollState, 2000);
+pollState();
+
+async function pollState(){
+  const state = await apiGet('getState');
+  if(!state) return;
+  const r = state.round;
+  currentRound = r;
+  document.getElementById('roundId').textContent = r ? r.roundId : '-';
+  // timer
+  if(r && r.endAt && r.state === 'betting'){
+    const end = new Date(r.endAt);
+    const remain = Math.max(0, Math.floor((end - new Date())/1000));
+    document.getElementById('timer').textContent = remain + 's';
+    if(remain === 0){
+      // ask Apps Script to settle (in real use: only admin or Cloud trigger)
+      await apiPost('settleRound', { roundId: r.roundId });
+      // small pause and poll again to pick up result
+      setTimeout(pollState, 800);
+    }
+  } else if(r && r.state === 'ended'){
+    document.getElementById('timer').textContent = '0s';
+    // show result visually: highlight the winning cell
+    if(r.resultId) showResult(r.resultId);
+  } else {
+    document.getElementById('timer').textContent = '--';
+  }
+  // update history list
+  const hist = state ? await apiGet('getHistory') : null;
+  if(hist && hist.history){
+    const hEl = document.getElementById('history'); hEl.innerHTML = '';
+    hist.history.slice(0,8).forEach(it=>{
+      const div = document.createElement('div'); div.style.padding='6px'; div.style.borderBottom='1px dashed rgba(255,255,255,0.02)';
+      div.innerHTML = `${it.roundId}: ${it.resultIcon||''} ${it.resultName||''} (1:${it.resultMult||''})`;
+      hEl.appendChild(div);
+    });
+  }
+}
+
+function showResult(id){
+  clearInterval(highlightInterval);
+  const cells = Array.from(document.querySelectorAll('.cell'));
+  let index=0; let steps = 28;
+  highlightInterval = setInterval(()=>{
+    cells.forEach(c=>c.classList.remove('glow'));
+    cells[index % cells.length].classList.add('glow');
+    index++; steps--;
+    if(steps <= 0){
+      clearInterval(highlightInterval);
+      cells.forEach(c=>c.classList.remove('glow'));
+      const target = cells.find(c=>c.dataset.id === id);
+      if(target){ target.classList.add('win'); setTimeout(()=>target.classList.remove('win'),1200); }
+    }
+  }, 120);
+}
+
+// API helpers
+async function apiGet(action){
+  try{
+    const res = await fetch(WEB_APP_URL + '?action=' + action);
+    return await res.json();
+  }catch(e){
+    console.error(e); return null;
+  }
+}
+async function apiPost(action, body){
+  try{
+    const res = await fetch(WEB_APP_URL + '?action=' + action, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    return await res.json();
+  }catch(e){
+    console.error(e);
+    return null;
+  }
+}
+
+
+// modal
+function showModal(html){ document.getElementById('modalBox').innerHTML = (typeof html === 'string' ? html : '<pre>'+JSON.stringify(html,null,2)+'</pre>') + '<div style="text-align:right;margin-top:10px"><button onclick="hideModal()" class="btn">Cerrar</button></div>'; document.getElementById('modal').style.display='flex'; }
+function hideModal(){ document.getElementById('modal').style.display='none'; }
+
+// small: update UI from local user variable
+setInterval(()=>{ if(user) document.getElementById('bal').textContent = balance; }, 2000);
+
+</script>
+</body>
+</html>
